@@ -40,10 +40,12 @@ export const MODULEDECLARATION_TYPES = FLIPPED_ALIAS_KEYS["ModuleDeclaration"];
 export const EXPORTDECLARATION_TYPES = FLIPPED_ALIAS_KEYS["ExportDeclaration"];
 export const MODULESPECIFIER_TYPES = FLIPPED_ALIAS_KEYS["ModuleSpecifier"];
 export const FLOW_TYPES = FLIPPED_ALIAS_KEYS["Flow"];
+export const FLOWTYPE_TYPES = FLIPPED_ALIAS_KEYS["FlowType"];
 export const FLOWBASEANNOTATION_TYPES =
   FLIPPED_ALIAS_KEYS["FlowBaseAnnotation"];
 export const FLOWDECLARATION_TYPES = FLIPPED_ALIAS_KEYS["FlowDeclaration"];
 export const FLOWPREDICATE_TYPES = FLIPPED_ALIAS_KEYS["FlowPredicate"];
 export const JSX_TYPES = FLIPPED_ALIAS_KEYS["JSX"];
+export const PRIVATE_TYPES = FLIPPED_ALIAS_KEYS["Private"];
 export const TSTYPEELEMENT_TYPES = FLIPPED_ALIAS_KEYS["TSTypeElement"];
 export const TSTYPE_TYPES = FLIPPED_ALIAS_KEYS["TSType"];

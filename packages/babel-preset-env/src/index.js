@@ -3,7 +3,10 @@
 import semver from "semver";
 import builtInsList from "../data/built-ins.json";
 import { logPlugin } from "./debug";
-import { defaultWebIncludes } from "./default-includes";
+import {
+  getPlatformSpecificDefaultFor,
+  getOptionSpecificExcludesFor,
+} from "./defaults";
 import moduleTransformations from "./module-transformations";
 import normalizeOptions from "./normalize-options.js";
 import pluginList from "../data/plugins.json";
@@ -22,7 +25,8 @@ import {
   semverify,
   isUnreleasedVersion,
 } from "./utils";
-import type { Plugin, Targets } from "./types";
+import type { Targets } from "./types";
+import { declare } from "@babel/helper-plugin-utils";
 
 const getPlugin = (pluginName: string) => {
   const plugin = availablePlugins[pluginName];
@@ -75,8 +79,8 @@ export const isPluginRequired = (
 
       if (!semver.valid(lowestTargetedVersion)) {
         throw new Error(
-          // eslint-disable-next-line max-len
-          `Invalid version passed for target "${environment}": "${lowestTargetedVersion}". Versions must be in semver format (major.minor.patch)`,
+          `Invalid version passed for target "${environment}": "${lowestTargetedVersion}". ` +
+            "Versions must be in semver format (major.minor.patch)",
         );
       }
 
@@ -90,10 +94,10 @@ export const isPluginRequired = (
   return isRequiredForEnvironments.length > 0;
 };
 
-let hasBeenLogged = false;
-
 const getBuiltInTargets = targets => {
-  const builtInTargets = Object.assign({}, targets);
+  const builtInTargets = {
+    ...targets,
+  };
   if (builtInTargets.uglify != null) {
     delete builtInTargets.uglify;
   }
@@ -113,26 +117,6 @@ export const transformIncludesAndExcludes = (opts: Array<string>): Object => {
       builtIns: new Set(),
     },
   );
-};
-
-const getPlatformSpecificDefaultFor = (targets: Targets): ?Array<string> => {
-  const targetNames = Object.keys(targets);
-  const isAnyTarget = !targetNames.length;
-  const isWebTarget = targetNames.some(name => name !== "node");
-
-  return isAnyTarget || isWebTarget ? defaultWebIncludes : null;
-};
-
-const getOptionSpecificExcludesFor = ({
-  loose,
-}: {
-  loose: boolean,
-}): Array<string> => {
-  const defaultExcludes = [];
-  if (loose) {
-    defaultExcludes.push("transform-typeof-symbol");
-  }
-  return defaultExcludes;
 };
 
 const filterItems = (
@@ -171,10 +155,9 @@ const filterItems = (
   return result;
 };
 
-export default function buildPreset(
-  api: Object,
-  opts: Object = {},
-): { plugins: Array<Plugin> } {
+export default declare((api, opts) => {
+  api.assertVersion(7);
+
   const {
     configPath,
     debug,
@@ -199,6 +182,17 @@ export default function buildPreset(
     console.log("");
     console.log("The uglify target has been deprecated. Set the top level");
     console.log("option `forceAllTransforms: true` instead.");
+    console.log("");
+  }
+
+  if (optionsTargets && optionsTargets.esmodules && optionsTargets.browsers) {
+    console.log("");
+    console.log(
+      "@babel/preset-env: esmodules and browsers targets have been specified together.",
+    );
+    console.log(
+      `\`browsers\` target, \`${optionsTargets.browsers}\` will be ignored.`,
+    );
     console.log("");
   }
 
@@ -253,8 +247,7 @@ export default function buildPreset(
 
   const regenerator = transformations.has("transform-regenerator");
 
-  if (debug && !hasBeenLogged) {
-    hasBeenLogged = true;
+  if (debug) {
     console.log("@babel/preset-env: `DEBUG` option");
     console.log("\nUsing targets:");
     console.log(JSON.stringify(prettifyTargets(targets), null, 2));
@@ -297,4 +290,4 @@ Using polyfills with \`${useBuiltIns}\` option:`,
   return {
     plugins,
   };
-}
+});

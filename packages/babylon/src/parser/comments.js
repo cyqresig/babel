@@ -1,5 +1,3 @@
-/* eslint max-len: 0 */
-
 // @flow
 
 /**
@@ -64,16 +62,14 @@ export default class CommentsParser extends BaseParser {
         // later.
         this.state.trailingComments.length = 0;
       }
-    } else {
-      if (stack.length > 0) {
-        const lastInStack = last(stack);
-        if (
-          lastInStack.trailingComments &&
-          lastInStack.trailingComments[0].start >= node.end
-        ) {
-          trailingComments = lastInStack.trailingComments;
-          lastInStack.trailingComments = null;
-        }
+    } else if (stack.length > 0) {
+      const lastInStack = last(stack);
+      if (
+        lastInStack.trailingComments &&
+        lastInStack.trailingComments[0].start >= node.end
+      ) {
+        trailingComments = lastInStack.trailingComments;
+        delete lastInStack.trailingComments;
       }
     }
 
@@ -143,7 +139,7 @@ export default class CommentsParser extends BaseParser {
           last(lastChild.leadingComments).end <= node.start
         ) {
           node.leadingComments = lastChild.leadingComments;
-          lastChild.leadingComments = null;
+          delete lastChild.leadingComments;
         } else {
           // A leading comment for an anonymous class had been stolen by its first ClassMethod,
           // so this takes back the leading comment.
@@ -196,8 +192,10 @@ export default class CommentsParser extends BaseParser {
         // result in an empty array, and if so, the array must be
         // deleted.
         const leadingComments = this.state.leadingComments.slice(0, i);
-        node.leadingComments =
-          leadingComments.length === 0 ? null : leadingComments;
+
+        if (leadingComments.length) {
+          node.leadingComments = leadingComments;
+        }
 
         // Similarly, trailing comments are attached later. The variable
         // must be reset to null if there are no trailing comments.

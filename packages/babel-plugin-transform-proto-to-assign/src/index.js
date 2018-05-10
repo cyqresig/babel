@@ -1,7 +1,10 @@
+import { declare } from "@babel/helper-plugin-utils";
 import pull from "lodash/pull";
 import { types as t } from "@babel/core";
 
-export default function() {
+export default declare(api => {
+  api.assertVersion(7);
+
   function isProtoKey(node) {
     return t.isLiteral(t.toComputedKey(node, node.key), { value: "__proto__" });
   }
@@ -34,8 +37,14 @@ export default function() {
             t.expressionStatement(t.assignmentExpression("=", temp, left)),
           );
         }
-        nodes.push(buildDefaultsCallExpression(path.node, temp || left, file));
-        if (temp) nodes.push(temp);
+        nodes.push(
+          buildDefaultsCallExpression(
+            path.node,
+            t.cloneNode(temp || left),
+            file,
+          ),
+        );
+        if (temp) nodes.push(t.cloneNode(temp));
 
         path.replaceWithMultiple(nodes);
       },
@@ -70,4 +79,4 @@ export default function() {
       },
     },
   };
-}
+});

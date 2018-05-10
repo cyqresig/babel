@@ -99,7 +99,14 @@ function update_whitelist(summary) {
 }
 
 const options = {
-  plugins: ["jsx", "flow", "asyncGenerators", "objectRestSpread"],
+  plugins: [
+    "asyncGenerators",
+    "dynamicImport",
+    "flow",
+    "flowComments",
+    "jsx",
+    "objectRestSpread",
+  ],
   sourceType: "module",
   ranges: true,
 };
@@ -109,6 +116,8 @@ const flowOptionsMapping = {
   esproposal_class_static_fields: "classProperties",
   esproposal_export_star_as: "exportNamespaceFrom",
   esproposal_decorators: "decorators",
+  esproposal_optional_chaining: "optionalChaining",
+  types: "flowComments",
 };
 
 const summary = {
@@ -142,7 +151,15 @@ tests.forEach(section => {
 
     if (test.options) {
       Object.keys(test.options).forEach(option => {
-        if (!test.options[option]) return;
+        if (!test.options[option]) {
+          const idx = babylonOptions.plugins.indexOf(
+            flowOptionsMapping[option]
+          );
+          if (idx) {
+            babylonOptions.plugins.splice(idx, 1);
+          }
+          return;
+        }
         if (!flowOptionsMapping[option]) {
           throw new Error("Parser options not mapped " + option);
         }
@@ -157,15 +174,18 @@ tests.forEach(section => {
     } catch (e) {
       exception = e;
       failed = true;
+
       // lets retry in script mode
-      try {
-        parse(
-          test.content,
-          Object.assign({}, babylonOptions, { sourceType: "script" })
-        );
-        exception = null;
-        failed = false;
-      } catch (e) {}
+      if (shouldSuccess) {
+        try {
+          parse(
+            test.content,
+            Object.assign({}, babylonOptions, { sourceType: "script" })
+          );
+          exception = null;
+          failed = false;
+        } catch (e) {}
+      }
     }
 
     const isSuccess = shouldSuccess !== failed;

@@ -198,8 +198,10 @@ export function FunctionTypeAnnotation(node: Object, parent: Object) {
 export function FunctionTypeParam(node: Object) {
   this.print(node.name, node);
   if (node.optional) this.token("?");
-  this.token(":");
-  this.space();
+  if (node.name) {
+    this.token(":");
+    this.space();
+  }
   this.print(node.typeAnnotation, node);
 }
 
@@ -227,6 +229,12 @@ export function _interfaceish(node: Object) {
     this.word("mixins");
     this.space();
     this.printList(node.mixins, node);
+  }
+  if (node.implements && node.implements.length) {
+    this.space();
+    this.word("implements");
+    this.space();
+    this.printList(node.implements, node);
   }
   this.space();
   this.print(node.body, node);
@@ -420,9 +428,11 @@ export function ObjectTypeIndexer(node: Object) {
   }
   this._variance(node);
   this.token("[");
-  this.print(node.id, node);
-  this.token(":");
-  this.space();
+  if (node.id) {
+    this.print(node.id, node);
+    this.token(":");
+    this.space();
+  }
   this.print(node.key, node);
   this.token("]");
   this.token(":");
@@ -471,6 +481,14 @@ export function TypeCastExpression(node: Object) {
   this.print(node.expression, node);
   this.print(node.typeAnnotation, node);
   this.token(")");
+}
+
+export function Variance(node: Object) {
+  if (node.kind === "plus") {
+    this.token("+");
+  } else {
+    this.token("-");
+  }
 }
 
 export function VoidTypeAnnotation() {

@@ -64,7 +64,7 @@ function placeholderVisitorHandler(
   state: MetadataState,
 ) {
   let name;
-  if (t.isIdentifier(node)) {
+  if (t.isIdentifier(node) || t.isJSXIdentifier(node)) {
     name = ((node: any): BabelNodeIdentifier).name;
   } else if (t.isStringLiteral(node)) {
     name = ((node: any): BabelNodeStringLiteral).value;
@@ -134,22 +134,20 @@ type MetadataState = {
 };
 
 function parseWithCodeFrame(code: string, parserOpts: {}): BabelNodeFile {
-  parserOpts = Object.assign(
-    {
-      allowReturnOutsideFunction: true,
-      allowSuperOutsideMethod: true,
-      sourceType: "module",
-    },
-    parserOpts,
-  );
+  parserOpts = {
+    allowReturnOutsideFunction: true,
+    allowSuperOutsideMethod: true,
+    sourceType: "module",
+    ...parserOpts,
+  };
 
   try {
     return parse(code, parserOpts);
   } catch (err) {
     const loc = err.loc;
     if (loc) {
-      err.loc = null;
       err.message += "\n" + codeFrameColumns(code, { start: loc });
+      err.code = "BABEL_TEMPLATE_PARSE_ERROR";
     }
     throw err;
   }

@@ -383,11 +383,11 @@ defineType("Identifier", {
   fields: {
     ...patternLikeCommon,
     name: {
-      validate(node, key, val) {
+      validate: chain(function(node, key, val) {
         if (!isValidIdentifier(val)) {
           // throw new TypeError(`"${val}" is not a valid identifer name`);
         }
-      },
+      }, assertValueType("string")),
     },
     optional: {
       validate: assertValueType("boolean"),
@@ -503,7 +503,7 @@ defineType("MemberExpression", {
     },
     property: {
       validate: (function() {
-        const normal = assertNodeType("Identifier");
+        const normal = assertNodeType("Identifier", "PrivateName");
         const computed = assertNodeType("Expression");
 
         return function(node, key, val) {
@@ -835,6 +835,10 @@ defineType("VariableDeclarator", {
   fields: {
     id: {
       validate: assertNodeType("LVal"),
+    },
+    definite: {
+      optional: true,
+      validate: assertValueType("boolean"),
     },
     init: {
       optional: true,

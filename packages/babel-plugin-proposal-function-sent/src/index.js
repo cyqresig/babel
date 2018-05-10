@@ -1,11 +1,18 @@
+import { declare } from "@babel/helper-plugin-utils";
 import syntaxFunctionSent from "@babel/plugin-syntax-function-sent";
 import wrapFunction from "@babel/helper-wrap-function";
 import { types as t } from "@babel/core";
 
-export default function() {
+export default declare(api => {
+  api.assertVersion(7);
+
   const isFunctionSent = node =>
     t.isIdentifier(node.meta, { name: "function" }) &&
     t.isIdentifier(node.property, { name: "sent" });
+
+  const hasBeenReplaced = (node, sentId) =>
+    t.isAssignmentExpression(node) &&
+    t.isIdentifier(node.left, { name: sentId });
 
   const yieldVisitor = {
     Function(path) {
@@ -13,17 +20,16 @@ export default function() {
     },
 
     YieldExpression(path) {
-      const replaced = t.isAssignmentExpression(path.parent, {
-        left: this.sentId,
-      });
-      if (!replaced) {
-        path.replaceWith(t.assignmentExpression("=", this.sentId, path.node));
+      if (!hasBeenReplaced(path.parent, this.sentId)) {
+        path.replaceWith(
+          t.assignmentExpression("=", t.identifier(this.sentId), path.node),
+        );
       }
     },
 
     MetaProperty(path) {
       if (isFunctionSent(path.node)) {
-        path.replaceWith(this.sentId);
+        path.replaceWith(t.identifier(this.sentId));
       }
     },
   };
@@ -41,12 +47,12 @@ export default function() {
           throw new Error("Parent generator function not found");
         }
 
-        const sentId = path.scope.generateUidIdentifier("function.sent");
+        const sentId = path.scope.generateUid("function.sent");
 
         fnPath.traverse(yieldVisitor, { sentId });
         fnPath.node.body.body.unshift(
           t.variableDeclaration("let", [
-            t.variableDeclarator(sentId, t.yieldExpression()),
+            t.variableDeclarator(t.identifier(sentId), t.yieldExpression()),
           ]),
         );
 
@@ -54,4 +60,4 @@ export default function() {
       },
     },
   };
-}
+});

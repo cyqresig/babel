@@ -91,11 +91,38 @@ export function Super() {
 
 export function Decorator(node: Object) {
   this.token("@");
-  this.print(node.expression, node);
+  this.print(node.callee, node);
   this.newline();
 }
 
-export function CallExpression(node: Object) {
+export function OptionalMemberExpression(node: Object) {
+  this.print(node.object, node);
+
+  if (!node.computed && t.isMemberExpression(node.property)) {
+    throw new TypeError("Got a MemberExpression for MemberExpression property");
+  }
+
+  let computed = node.computed;
+  if (t.isLiteral(node.property) && typeof node.property.value === "number") {
+    computed = true;
+  }
+  if (node.optional) {
+    this.token("?.");
+  }
+
+  if (computed) {
+    this.token("[");
+    this.print(node.property, node);
+    this.token("]");
+  } else {
+    if (!node.optional) {
+      this.token(".");
+    }
+    this.print(node.property, node);
+  }
+}
+
+export function OptionalCallExpression(node: Object) {
   this.print(node.callee, node);
 
   this.print(node.typeParameters, node); // TS
@@ -103,6 +130,15 @@ export function CallExpression(node: Object) {
   if (node.optional) {
     this.token("?.");
   }
+  this.token("(");
+  this.printList(node.arguments, node);
+  this.token(")");
+}
+
+export function CallExpression(node: Object) {
+  this.print(node.callee, node);
+
+  this.print(node.typeParameters, node); // TS
   this.token("(");
   this.printList(node.arguments, node);
   this.token(")");
@@ -203,17 +239,12 @@ export function MemberExpression(node: Object) {
     computed = true;
   }
 
-  if (node.optional) {
-    this.token("?.");
-  }
   if (computed) {
     this.token("[");
     this.print(node.property, node);
     this.token("]");
   } else {
-    if (!node.optional) {
-      this.token(".");
-    }
+    this.token(".");
     this.print(node.property, node);
   }
 }
@@ -222,4 +253,9 @@ export function MetaProperty(node: Object) {
   this.print(node.meta, node);
   this.token(".");
   this.print(node.property, node);
+}
+
+export function PrivateName(node: Object) {
+  this.token("#");
+  this.print(node.id, node);
 }

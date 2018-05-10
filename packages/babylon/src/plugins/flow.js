@@ -1,5 +1,3 @@
-/* eslint max-len: 0 */
-
 // @flow
 
 import type Parser from "../parser";
@@ -7,6 +5,8 @@ import { types as tt, type TokenType } from "../tokenizer/types";
 import * as N from "../types";
 import type { Pos, Position } from "../util/location";
 import type State from "../tokenizer/state";
+import * as charCodes from "charcodes";
+import { isIteratorStart } from "../util/identifier";
 
 const primitiveTypes = [
   "any",
@@ -33,6 +33,7 @@ function isEsModuleType(bodyElement: N.Node): boolean {
           bodyElement.declaration.type !== "InterfaceDeclaration")))
   );
 }
+
 
 function hasTypeImportKind(node: N.Node): boolean {
   return node.importKind === "type" || node.importKind === "typeof";
@@ -259,7 +260,8 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       let kind = null;
       let hasModuleExport = false;
       const errorMessage =
-        "Found both `declare module.exports` and `declare export` in the same module. Modules can only have 1 since they are either an ES module or they are a CommonJS module";
+        "Found both `declare module.exports` and `declare export` in the same module. " +
+        "Modules can only have 1 since they are either an ES module or they are a CommonJS module";
       body.forEach(bodyElement => {
         if (isEsModuleType(bodyElement)) {
           if (kind === "CommonJS") {
@@ -402,6 +404,7 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       }
 
       node.extends = [];
+      node.implements = [];
       node.mixins = [];
 
       if (this.eat(tt._extends)) {
@@ -414,6 +417,13 @@ export default (superClass: Class<Parser>): Class<Parser> =>
         this.next();
         do {
           node.mixins.push(this.flowParseInterfaceExtends());
+        } while (this.eat(tt.comma));
+      }
+
+      if (this.isContextual("implements")) {
+        this.next();
+        do {
+          node.implements.push(this.flowParseInterfaceExtends());
         } while (this.eat(tt.comma));
       }
 
@@ -496,7 +506,18 @@ export default (superClass: Class<Parser>): Class<Parser> =>
 
     // Type annotations
 
-    flowParseTypeParameter(): N.TypeParameter {
+    flowParseTypeParameter(
+      allowDefault?: boolean = true,
+      requireDefault?: boolean = false,
+    ): N.TypeParameter {
+      if (!allowDefault && requireDefault) {
+        throw new Error(
+          "Cannot disallow a default value (`allowDefault`) while also requiring it (`requireDefault`).",
+        );
+      }
+
+      const nodeStart = this.state.start;
+
       const node = this.startNode();
 
       const variance = this.flowParseVariance();
@@ -507,14 +528,28 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       node.bound = ident.typeAnnotation;
 
       if (this.match(tt.eq)) {
-        this.eat(tt.eq);
-        node.default = this.flowParseType();
+        if (allowDefault) {
+          this.eat(tt.eq);
+          node.default = this.flowParseType();
+        } else {
+          this.unexpected();
+        }
+      } else {
+        if (requireDefault) {
+          this.unexpected(
+            nodeStart,
+            // eslint-disable-next-line max-len
+            "Type parameter declaration needs a default, since a preceding type parameter declaration has a default.",
+          );
+        }
       }
 
       return this.finishNode(node, "TypeParameter");
     }
 
-    flowParseTypeParameterDeclaration(): N.TypeParameterDeclaration {
+    flowParseTypeParameterDeclaration(
+      allowDefault?: boolean = true,
+    ): N.TypeParameterDeclaration {
       const oldInType = this.state.inType;
       const node = this.startNode();
       node.params = [];
@@ -528,8 +563,20 @@ export default (superClass: Class<Parser>): Class<Parser> =>
         this.unexpected();
       }
 
+      let defaultRequired = false;
+
       do {
-        node.params.push(this.flowParseTypeParameter());
+        const typeParameter = this.flowParseTypeParameter(
+          allowDefault,
+          defaultRequired,
+        );
+
+        node.params.push(typeParameter);
+
+        if (typeParameter.default) {
+          defaultRequired = true;
+        }
+
         if (!this.isRelational(">")) {
           this.expect(tt.comma);
         }
@@ -598,7 +645,9 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       node.typeParameters = null;
 
       if (this.isRelational("<")) {
-        node.typeParameters = this.flowParseTypeParameterDeclaration();
+        node.typeParameters = this.flowParseTypeParameterDeclaration(
+          /* allowDefault */ false,
+        );
       }
 
       this.expect(tt.parenL);
@@ -659,13 +708,15 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       while (!this.match(endDelim)) {
         let isStatic = false;
         const node = this.startNode();
-        if (
-          allowStatic &&
-          this.isContextual("static") &&
-          this.lookahead().type !== tt.colon
-        ) {
-          this.next();
-          isStatic = true;
+
+        if (allowStatic && this.isContextual("static")) {
+          const lookahead = this.lookahead();
+
+          // static is a valid identifier name
+          if (lookahead.type !== tt.colon && lookahead.type !== tt.question) {
+            this.next();
+            isStatic = true;
+          }
         }
 
         const variance = this.flowParseVariance();
@@ -761,7 +812,7 @@ export default (superClass: Class<Parser>): Class<Parser> =>
             this.startNodeAt(node.start, node.loc.start),
           );
           if (kind === "get" || kind === "set") {
-            this.flowCheckGetterSetterParamCount(node);
+            this.flowCheckGetterSetterParams(node);
           }
         } else {
           if (kind !== "init") this.unexpected();
@@ -781,19 +832,28 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       }
     }
 
-    // This is similar to checkGetterSetterParamCount, but as
+    // This is similar to checkGetterSetterParams, but as
     // babylon uses non estree properties we cannot reuse it here
-    flowCheckGetterSetterParamCount(
+    flowCheckGetterSetterParams(
       property: N.FlowObjectTypeProperty | N.FlowObjectTypeSpreadProperty,
     ): void {
       const paramCount = property.kind === "get" ? 0 : 1;
-      if (property.value.params.length !== paramCount) {
-        const start = property.start;
+      const start = property.start;
+      const length =
+        property.value.params.length + (property.value.rest ? 1 : 0);
+      if (length !== paramCount) {
         if (property.kind === "get") {
-          this.raise(start, "getter should have no params");
+          this.raise(start, "getter must not have any formal parameters");
         } else {
-          this.raise(start, "setter should have exactly one param");
+          this.raise(start, "setter must have exactly one formal parameter");
         }
+      }
+
+      if (property.kind === "set" && property.value.rest) {
+        this.raise(
+          start,
+          "setter function argument must not be a rest parameter",
+        );
       }
     }
 
@@ -978,7 +1038,9 @@ export default (superClass: Class<Parser>): Class<Parser> =>
 
         case tt.relational:
           if (this.state.value === "<") {
-            node.typeParameters = this.flowParseTypeParameterDeclaration();
+            node.typeParameters = this.flowParseTypeParameterDeclaration(
+              /* allowDefault */ false,
+            );
             this.expect(tt.parenL);
             tmp = this.flowParseFunctionTypeParams();
             node.params = tmp.params;
@@ -1426,8 +1488,8 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       return { consequent, failed };
     }
 
-    // Given an expression, walks throught its arrow functions whose body is
-    // an expression and throught conditional expressions. It returns every
+    // Given an expression, walks through out its arrow functions whose body is
+    // an expression and through out conditional expressions. It returns every
     // function which has been parsed with a return type but could have been
     // parenthesized expressions.
     // These functions are separated into two arrays: one containing the ones
@@ -1625,8 +1687,12 @@ export default (superClass: Class<Parser>): Class<Parser> =>
 
     // ensure that inside flow types, we bypass the jsx parser plugin
     readToken(code: number): void {
+      const next = this.input.charCodeAt(this.state.pos + 1);
       if (this.state.inType && (code === 62 || code === 60)) {
         return this.finishOp(tt.relational, 1);
+      } else if (isIteratorStart(code, next)) {
+        this.state.isIterator = true;
+        return super.readWord();
       } else {
         return super.readToken(code);
       }
@@ -1752,7 +1818,9 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       }
       delete (method: $FlowFixMe).variance;
       if (this.isRelational("<")) {
-        method.typeParameters = this.flowParseTypeParameterDeclaration();
+        method.typeParameters = this.flowParseTypeParameterDeclaration(
+          /* allowDefault */ false,
+        );
       }
 
       super.pushClassMethod(
@@ -1822,6 +1890,7 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       isAsync: boolean,
       isPattern: boolean,
       refShorthandDefaultPos: ?Pos,
+      containsEsc: boolean,
     ): void {
       if ((prop: $FlowFixMe).variance) {
         this.unexpected((prop: $FlowFixMe).variance.start);
@@ -1832,7 +1901,9 @@ export default (superClass: Class<Parser>): Class<Parser> =>
 
       // method shorthand
       if (this.isRelational("<")) {
-        typeParameters = this.flowParseTypeParameterDeclaration();
+        typeParameters = this.flowParseTypeParameterDeclaration(
+          /* allowDefault */ false,
+        );
         if (!this.match(tt.parenL)) this.unexpected();
       }
 
@@ -1844,6 +1915,7 @@ export default (superClass: Class<Parser>): Class<Parser> =>
         isAsync,
         isPattern,
         refShorthandDefaultPos,
+        containsEsc,
       );
 
       // add typeParameters if we found them
@@ -1885,7 +1957,8 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       ) {
         this.raise(
           node.typeAnnotation.start,
-          "Type annotations must come before default assignments, e.g. instead of `age = 25: number` use `age: number = 25`",
+          "Type annotations must come before default assignments, " +
+            "e.g. instead of `age = 25: number` use `age: number = 25`",
         );
       }
 
@@ -1926,6 +1999,12 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       }
       if (kind) {
         const lh = this.lookahead();
+
+        // import type * is not allowed
+        if (kind === "type" && lh.type === tt.star) {
+          this.unexpected(lh.start);
+        }
+
         if (
           isMaybeDefaultImport(lh) ||
           lh.type === tt.braceL ||
@@ -1996,7 +2075,8 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       if (nodeIsTypeImport && specifierIsTypeImport) {
         this.raise(
           firstIdentLoc,
-          "The `type` and `typeof` keywords on named imports can only be used on regular `import` statements. It cannot be used with `import type` or `import typeof` statements",
+          "The `type` and `typeof` keywords on named imports can only be used on regular " +
+            "`import` statements. It cannot be used with `import type` or `import typeof` statements",
         );
       }
 
@@ -2022,7 +2102,9 @@ export default (superClass: Class<Parser>): Class<Parser> =>
       // $FlowFixMe
       const kind = node.kind;
       if (kind !== "get" && kind !== "set" && this.isRelational("<")) {
-        node.typeParameters = this.flowParseTypeParameterDeclaration();
+        node.typeParameters = this.flowParseTypeParameterDeclaration(
+          /* allowDefault */ false,
+        );
       }
       super.parseFunctionParams(node);
     }
@@ -2271,5 +2353,67 @@ export default (superClass: Class<Parser>): Class<Parser> =>
         /* params */ undefined,
         /* isAsync */ true,
       );
+    }
+
+    readToken_mult_modulo(code: number): void {
+      const next = this.input.charCodeAt(this.state.pos + 1);
+      if (
+        code === charCodes.asterisk &&
+        next === charCodes.slash &&
+        this.state.hasFlowComment
+      ) {
+        this.state.hasFlowComment = false;
+        this.state.pos += 2;
+        this.nextToken();
+        return;
+      }
+
+      super.readToken_mult_modulo(code);
+    }
+
+    skipBlockComment(): void {
+      if (
+        this.hasPlugin("flow") &&
+        this.hasPlugin("flowComments") &&
+        this.skipFlowComment()
+      ) {
+        this.hasFlowCommentCompletion();
+        this.state.pos += this.skipFlowComment();
+        this.state.hasFlowComment = true;
+        return;
+      }
+
+      let end;
+      if (this.hasPlugin("flow") && this.state.hasFlowComment) {
+        end = this.input.indexOf("*-/", (this.state.pos += 2));
+        if (end === -1) this.raise(this.state.pos - 2, "Unterminated comment");
+        this.state.pos = end + 3;
+        return;
+      }
+
+      super.skipBlockComment();
+    }
+
+    skipFlowComment(): number | boolean {
+      const ch2 = this.input.charCodeAt(this.state.pos + 2);
+      const ch3 = this.input.charCodeAt(this.state.pos + 3);
+
+      if (ch2 === charCodes.colon && ch3 === charCodes.colon) {
+        return 4; // check for /*::
+      }
+      if (this.input.slice(this.state.pos + 2, 14) === "flow-include") {
+        return 14; // check for /*flow-include
+      }
+      if (ch2 === charCodes.colon && ch3 !== charCodes.colon && 2) {
+        return 2; // check for /*:, advance only 2 steps
+      }
+      return false;
+    }
+
+    hasFlowCommentCompletion(): void {
+      const end = this.input.indexOf("*/", this.state.pos);
+      if (end === -1) {
+        this.raise(this.state.pos, "Unterminated comment");
+      }
     }
   };

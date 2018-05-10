@@ -36,6 +36,10 @@ defineType("ClassProperty", {
       validate: assertNodeType("Expression"),
       optional: true,
     },
+    definite: {
+      validate: assertValueType("boolean"),
+      optional: true,
+    },
     typeAnnotation: {
       validate: assertNodeType("TypeAnnotation", "TSTypeAnnotation", "Noop"),
       optional: true,
@@ -54,15 +58,94 @@ defineType("ClassProperty", {
   },
 });
 
+defineType("OptionalMemberExpression", {
+  builder: ["object", "property", "computed", "optional"],
+  visitor: ["object", "property"],
+  aliases: ["Expression"],
+  fields: {
+    object: {
+      validate: assertNodeType("Expression"),
+    },
+    property: {
+      validate: (function() {
+        const normal = assertNodeType("Identifier");
+        const computed = assertNodeType("Expression");
+
+        return function(node, key, val) {
+          const validator = node.computed ? computed : normal;
+          validator(node, key, val);
+        };
+      })(),
+    },
+    computed: {
+      default: false,
+    },
+    optional: {
+      validate: assertValueType("boolean"),
+    },
+  },
+});
+
+defineType("OptionalCallExpression", {
+  visitor: ["callee", "arguments", "typeParameters"],
+  builder: ["callee", "arguments", "optional"],
+  aliases: ["Expression"],
+  fields: {
+    callee: {
+      validate: assertNodeType("Expression"),
+    },
+    arguments: {
+      validate: chain(
+        assertValueType("array"),
+        assertEach(
+          assertNodeType("Expression", "SpreadElement", "JSXNamespacedName"),
+        ),
+      ),
+    },
+    optional: {
+      validate: assertValueType("boolean"),
+    },
+    typeParameters: {
+      validate: assertNodeType(
+        "TypeParameterInstantiation",
+        "TSTypeParameterInstantiation",
+      ),
+      optional: true,
+    },
+  },
+});
+
+defineType("ClassPrivateProperty", {
+  visitor: ["key", "value"],
+  builder: ["key", "value"],
+  aliases: ["Property", "Private"],
+  fields: {
+    key: {
+      validate: assertNodeType("PrivateName"),
+    },
+    value: {
+      validate: assertNodeType("Expression"),
+      optional: true,
+    },
+  },
+});
+
 defineType("Import", {
   aliases: ["Expression"],
 });
 
 defineType("Decorator", {
-  visitor: ["expression"],
+  visitor: ["callee", "arguments"],
   fields: {
-    expression: {
+    callee: {
       validate: assertNodeType("Expression"),
+    },
+    arguments: {
+      optional: true,
+      validate: chain(
+        assertValueType("array"),
+        assertEach(assertNodeType("Expression", "SpreadElement")),
+      ),
     },
   },
 });
@@ -92,6 +175,16 @@ defineType("ExportNamespaceSpecifier", {
   aliases: ["ModuleSpecifier"],
   fields: {
     exported: {
+      validate: assertNodeType("Identifier"),
+    },
+  },
+});
+
+defineType("PrivateName", {
+  visitor: ["id"],
+  aliases: ["Private"],
+  fields: {
+    id: {
       validate: assertNodeType("Identifier"),
     },
   },

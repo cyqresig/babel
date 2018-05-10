@@ -22,7 +22,16 @@ export { hasExports, isSideEffectImport, isModule };
  */
 export function rewriteModuleStatementsAndPrepareHeader(
   path: NodePath,
-  { exportName, strict, allowTopLevelThis, strictMode, loose, noInterop },
+  {
+    exportName,
+    strict,
+    allowTopLevelThis,
+    strictMode,
+    loose,
+    noInterop,
+    lazy,
+    esNamespaceOnly,
+  },
 ) {
   assert(isModule(path), "Cannot process module statements in a script");
   path.node.sourceType = "script";
@@ -30,6 +39,8 @@ export function rewriteModuleStatementsAndPrepareHeader(
   const meta = normalizeAndLoadModuleMetadata(path, exportName, {
     noInterop,
     loose,
+    lazy,
+    esNamespaceOnly,
   });
 
   if (!allowTopLevelThis) {
@@ -117,6 +128,9 @@ export function buildNamespaceInitStatements(
 ) {
   const statements = [];
 
+  let srcNamespace = t.identifier(sourceMetadata.name);
+  if (sourceMetadata.lazy) srcNamespace = t.callExpression(srcNamespace, []);
+
   for (const localName of sourceMetadata.importsNamespace) {
     if (localName === sourceMetadata.name) continue;
 
@@ -124,7 +138,7 @@ export function buildNamespaceInitStatements(
     statements.push(
       template.statement`var NAME = SOURCE;`({
         NAME: localName,
-        SOURCE: sourceMetadata.name,
+        SOURCE: t.cloneNode(srcNamespace),
       }),
     );
   }
@@ -134,17 +148,26 @@ export function buildNamespaceInitStatements(
   for (const exportName of sourceMetadata.reexportNamespace) {
     // Assign export to namespace object.
     statements.push(
-      template.statement`EXPORTS.NAME = NAMESPACE;`({
+      (sourceMetadata.lazy
+        ? template.statement`
+            Object.defineProperty(EXPORTS, "NAME", {
+              enumerable: true,
+              get: function() {
+                return NAMESPACE;
+              }
+            });
+          `
+        : template.statement`EXPORTS.NAME = NAMESPACE;`)({
         EXPORTS: metadata.exportName,
         NAME: exportName,
-        NAMESPACE: sourceMetadata.name,
+        NAMESPACE: t.cloneNode(srcNamespace),
       }),
     );
   }
   if (sourceMetadata.reexportAll) {
     const statement = buildNamespaceReexport(
       metadata,
-      sourceMetadata.name,
+      t.cloneNode(srcNamespace),
       loose,
     );
     statement.loc = sourceMetadata.reexportAll.loc;
@@ -169,12 +192,16 @@ const getTemplateForReexport = loose => {
 };
 
 const buildReexportsFromMeta = (meta, metadata, loose) => {
+  const namespace = metadata.lazy
+    ? t.callExpression(t.identifier(metadata.name), [])
+    : t.identifier(metadata.name);
+
   const templateForCurrentMode = getTemplateForReexport(loose);
   return Array.from(metadata.reexports, ([exportName, importName]) =>
     templateForCurrentMode({
       EXPORTS: meta.exportName,
       EXPORT_NAME: exportName,
-      NAMESPACE: metadata.name,
+      NAMESPACE: t.cloneNode(namespace),
       IMPORT_NAME: importName,
     }),
   );

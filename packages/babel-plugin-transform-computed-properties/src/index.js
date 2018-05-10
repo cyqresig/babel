@@ -1,6 +1,9 @@
+import { declare } from "@babel/helper-plugin-utils";
 import { template, types as t } from "@babel/core";
 
-export default function(api, options) {
+export default declare((api, options) => {
+  api.assertVersion(7);
+
   const { loose } = options;
   const pushComputedProps = loose
     ? pushComputedPropsLoose
@@ -34,7 +37,7 @@ export default function(api, options) {
           t.assignmentExpression(
             "=",
             t.memberExpression(
-              objId,
+              t.cloneNode(objId),
               prop.key,
               prop.computed || t.isLiteral(prop.key),
             ),
@@ -62,7 +65,7 @@ export default function(api, options) {
     body.push(
       ...buildMutatorMapAssign({
         MUTATOR_MAP_REF: getMutatorId(),
-        KEY: key,
+        KEY: t.cloneNode(key),
         VALUE: getValue(prop),
         KIND: t.identifier(prop.kind),
       }),
@@ -74,7 +77,7 @@ export default function(api, options) {
       if (prop.kind === "get" || prop.kind === "set") {
         pushMutatorDefine(info, prop);
       } else {
-        pushAssign(info.objId, prop, info.body);
+        pushAssign(t.cloneNode(info.objId), prop, info.body);
       }
     }
   }
@@ -100,7 +103,7 @@ export default function(api, options) {
           body.push(
             t.expressionStatement(
               t.callExpression(state.addHelper("defineProperty"), [
-                objId,
+                t.cloneNode(objId),
                 key,
                 getValue(prop),
               ]),
@@ -165,7 +168,7 @@ export default function(api, options) {
               );
             }
 
-            return mutatorRef;
+            return t.cloneNode(mutatorRef);
           };
 
           const single = pushComputedProps({
@@ -183,7 +186,7 @@ export default function(api, options) {
               t.expressionStatement(
                 t.callExpression(
                   state.addHelper("defineEnumerableProperties"),
-                  [objId, mutatorRef],
+                  [t.cloneNode(objId), t.cloneNode(mutatorRef)],
                 ),
               ),
             );
@@ -192,11 +195,11 @@ export default function(api, options) {
           if (single) {
             path.replaceWith(single);
           } else {
-            body.push(t.expressionStatement(objId));
+            body.push(t.expressionStatement(t.cloneNode(objId)));
             path.replaceWithMultiple(body);
           }
         },
       },
     },
   };
-}
+});

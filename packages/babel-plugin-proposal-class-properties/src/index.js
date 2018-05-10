@@ -1,68 +1,78 @@
+import { declare } from "@babel/helper-plugin-utils";
 import nameFunction from "@babel/helper-function-name";
 import syntaxClassProperties from "@babel/plugin-syntax-class-properties";
-import { template, types as t } from "@babel/core";
+import { template, traverse, types as t } from "@babel/core";
+import { environmentVisitor } from "@babel/helper-replace-supers";
 
-export default function(api, options) {
+export default declare((api, options) => {
+  api.assertVersion(7);
+
   const { loose } = options;
 
-  const findBareSupers = {
-    Super(path) {
-      if (path.parentPath.isCallExpression({ callee: path.node })) {
-        this.push(path.parentPath);
-      }
+  const findBareSupers = traverse.visitors.merge([
+    {
+      Super(path) {
+        const { node, parentPath } = path;
+        if (parentPath.isCallExpression({ callee: node })) {
+          this.push(parentPath);
+        }
+      },
     },
-  };
+    environmentVisitor,
+  ]);
 
   const referenceVisitor = {
     "TSTypeAnnotation|TypeAnnotation"(path) {
       path.skip();
     },
+
     ReferencedIdentifier(path) {
       if (this.scope.hasOwnBinding(path.node.name)) {
-        this.collision = true;
+        this.scope.rename(path.node.name);
         path.skip();
       }
     },
   };
 
-  const ClassFieldDefinitionEvaluationTDZVisitor = {
-    Expression(path) {
-      if (path === this.shouldSkip) {
-        path.skip();
-      }
+  const classFieldDefinitionEvaluationTDZVisitor = traverse.visitors.merge([
+    {
+      ReferencedIdentifier(path) {
+        if (this.classRef === path.scope.getBinding(path.node.name)) {
+          const classNameTDZError = this.file.addHelper("classNameTDZError");
+          const throwNode = t.callExpression(classNameTDZError, [
+            t.stringLiteral(path.node.name),
+          ]);
+
+          path.replaceWith(t.sequenceExpression([throwNode, path.node]));
+          path.skip();
+        }
+      },
     },
+    environmentVisitor,
+  ]);
 
-    ReferencedIdentifier(path) {
-      if (this.classRef === path.scope.getBinding(path.node.name)) {
-        const classNameTDZError = this.file.addHelper("classNameTDZError");
-        const throwNode = t.callExpression(classNameTDZError, [
-          t.stringLiteral(path.node.name),
-        ]);
-
-        path.replaceWith(t.sequenceExpression([throwNode, path.node]));
-        path.skip();
-      }
-    },
-  };
-
-  const buildClassPropertySpec = (ref, { key, value, computed }, scope) => {
-    return template.statement`
-      Object.defineProperty(REF, KEY, {
-        configurable: true,
-        enumerable: true,
-        writable: true,
-        value: VALUE
-      });
-    `({
-      REF: ref,
-      KEY: t.isIdentifier(key) && !computed ? t.stringLiteral(key.name) : key,
-      VALUE: value || scope.buildUndefinedNode(),
-    });
+  const buildClassPropertySpec = (
+    ref,
+    { key, value, computed },
+    scope,
+    state,
+  ) => {
+    return t.expressionStatement(
+      t.callExpression(state.addHelper("defineProperty"), [
+        ref,
+        t.isIdentifier(key) && !computed ? t.stringLiteral(key.name) : key,
+        value || scope.buildUndefinedNode(),
+      ]),
+    );
   };
 
   const buildClassPropertyLoose = (ref, { key, value, computed }, scope) => {
     return template.statement`MEMBER = VALUE`({
-      MEMBER: t.memberExpression(ref, key, computed || t.isLiteral(key)),
+      MEMBER: t.memberExpression(
+        t.cloneNode(ref),
+        key,
+        computed || t.isLiteral(key),
+      ),
       VALUE: value || scope.buildUndefinedNode(),
     });
   };
@@ -75,7 +85,7 @@ export default function(api, options) {
     inherits: syntaxClassProperties,
 
     visitor: {
-      Class(path) {
+      Class(path, state) {
         const isDerived = !!path.node.superClass;
         let constructor;
         const props = [];
@@ -108,17 +118,16 @@ export default function(api, options) {
 
         const computedNodes = [];
         const staticNodes = [];
-        let instanceBody = [];
+        const instanceBody = [];
 
         for (const computedPath of computedPaths) {
           const computedNode = computedPath.node;
           // Make sure computed property names are only evaluated once (upon class definition)
           // and in the right order in combination with static properties
           if (!computedPath.get("key").isConstantExpression()) {
-            computedPath.traverse(ClassFieldDefinitionEvaluationTDZVisitor, {
+            computedPath.traverse(classFieldDefinitionEvaluationTDZVisitor, {
               classRef: path.scope.getBinding(ref.name),
               file: this.file,
-              shouldSkip: computedPath.get("value"),
             });
             const ident = path.scope.generateUidIdentifierBasedOnNode(
               computedNode.key,
@@ -128,7 +137,7 @@ export default function(api, options) {
                 t.variableDeclarator(ident, computedNode.key),
               ]),
             );
-            computedNode.key = t.clone(ident);
+            computedNode.key = t.cloneNode(ident);
           }
         }
 
@@ -137,15 +146,20 @@ export default function(api, options) {
           if (propNode.decorators && propNode.decorators.length > 0) continue;
 
           if (propNode.static) {
-            staticNodes.push(buildClassProperty(ref, propNode, path.scope));
+            staticNodes.push(
+              buildClassProperty(ref, propNode, path.scope, state),
+            );
           } else {
             instanceBody.push(
-              buildClassProperty(t.thisExpression(), propNode, path.scope),
+              buildClassProperty(
+                t.thisExpression(),
+                propNode,
+                path.scope,
+                state,
+              ),
             );
           }
         }
-
-        const nodes = computedNodes.concat(staticNodes);
 
         if (instanceBody.length) {
           if (!constructor) {
@@ -168,42 +182,10 @@ export default function(api, options) {
             [constructor] = body.unshiftContainer("body", newConstructor);
           }
 
-          const collisionState = {
-            collision: false,
-            scope: constructor.scope,
-          };
-
+          const state = { scope: constructor.scope };
           for (const prop of props) {
-            prop.traverse(referenceVisitor, collisionState);
-            if (collisionState.collision) break;
-          }
-
-          if (collisionState.collision) {
-            const initialisePropsRef = path.scope.generateUidIdentifier(
-              "initialiseProps",
-            );
-
-            nodes.push(
-              t.variableDeclaration("var", [
-                t.variableDeclarator(
-                  initialisePropsRef,
-                  t.functionExpression(
-                    null,
-                    [],
-                    t.blockStatement(instanceBody),
-                  ),
-                ),
-              ]),
-            );
-
-            instanceBody = [
-              t.expressionStatement(
-                t.callExpression(
-                  t.memberExpression(initialisePropsRef, t.identifier("call")),
-                  [t.thisExpression()],
-                ),
-              ),
-            ];
+            if (prop.node.static) continue;
+            prop.traverse(referenceVisitor, state);
           }
 
           //
@@ -223,24 +205,21 @@ export default function(api, options) {
           prop.remove();
         }
 
-        if (!nodes.length) return;
+        if (computedNodes.length === 0 && staticNodes.length === 0) return;
 
         if (path.isClassExpression()) {
           path.scope.push({ id: ref });
-          path.replaceWith(t.assignmentExpression("=", ref, path.node));
-        } else {
-          // path.isClassDeclaration()
-          if (!path.node.id) {
-            path.node.id = ref;
-          }
-
-          if (path.parentPath.isExportDeclaration()) {
-            path = path.parentPath;
-          }
+          path.replaceWith(
+            t.assignmentExpression("=", t.cloneNode(ref), path.node),
+          );
+        } else if (!path.node.id) {
+          // Anonymous class declaration
+          path.node.id = ref;
         }
 
-        path.insertAfter(nodes);
+        path.insertBefore(computedNodes);
+        path.insertAfter(staticNodes);
       },
     },
   };
-}
+});

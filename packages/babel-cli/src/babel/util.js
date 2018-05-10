@@ -46,29 +46,31 @@ export function addSourceMappingUrl(code, loc) {
   return code + "\n//# sourceMappingURL=" + path.basename(loc);
 }
 
-export function log(msg) {
-  if (!commander.quiet) console.log(msg);
+export function log(msg, force) {
+  if (force === true || commander.verbose) console.log(msg);
 }
 
-export function transform(filename, code, opts) {
-  opts = Object.assign({}, opts, {
+export function transform(filename, code, opts, callback) {
+  opts = {
+    ...opts,
     filename,
-  });
+  };
 
-  return babel.transform(code, opts);
+  babel.transform(code, opts, callback);
 }
 
-export function compile(filename, opts) {
-  try {
-    return babel.transformFileSync(filename, opts);
-  } catch (err) {
-    if (commander.watch) {
-      console.error(err);
-      return { ignored: true };
-    } else {
-      throw err;
+export function compile(filename, opts, callback) {
+  babel.transformFile(filename, opts, function(err, res) {
+    if (err) {
+      if (commander.watch) {
+        console.error(err);
+        return callback(null, null);
+      } else {
+        return callback(err);
+      }
     }
-  }
+    return callback(null, res);
+  });
 }
 
 export function deleteDir(path) {

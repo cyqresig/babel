@@ -84,12 +84,12 @@ export default function get(entryLoc): Array<Suite> {
     }
 
     function push(taskName, taskDir) {
-      let actualLocAlias = suiteName + "/" + taskName + "/actual.js";
-      let expectLocAlias = suiteName + "/" + taskName + "/expected.js";
+      let actualLocAlias = suiteName + "/" + taskName + "/input.js";
+      let expectLocAlias = suiteName + "/" + taskName + "/output.js";
       let execLocAlias = suiteName + "/" + taskName + "/exec.js";
 
-      let actualLoc = taskDir + "/actual.js";
-      let expectLoc = taskDir + "/expected.js";
+      let actualLoc = taskDir + "/input.js";
+      let expectLoc = taskDir + "/output.js";
       let execLoc = taskDir + "/exec.js";
 
       const hasExecJS = fs.existsSync(execLoc);
@@ -124,6 +124,7 @@ export default function get(entryLoc): Array<Suite> {
         if (ext !== ".js" && ext !== ".mjs") return;
 
         execLoc = taskDir;
+        execLocAlias = suiteName + "/" + taskName;
       }
 
       if (resolve.relative(expectLoc + "on")) {
@@ -194,6 +195,11 @@ export default function get(entryLoc): Array<Suite> {
       const sourceMapLoc = taskDir + "/source-map.json";
       if (fs.existsSync(sourceMapLoc)) {
         test.sourceMap = JSON.parse(readFile(sourceMapLoc));
+      }
+
+      const inputMapLoc = taskDir + "/input-source-map.json";
+      if (fs.existsSync(inputMapLoc)) {
+        test.inputSourceMap = JSON.parse(readFile(inputMapLoc));
       }
     }
   }

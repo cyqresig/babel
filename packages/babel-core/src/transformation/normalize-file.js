@@ -6,6 +6,7 @@ import convertSourceMap, { typeof Converter } from "convert-source-map";
 import { parse } from "babylon";
 import { codeFrameColumns } from "@babel/code-frame";
 import File from "./file/file";
+import generateMissingPluginMessage from "./util/missing-plugin-helper";
 
 const shebangRegex = /^#!.*/;
 
@@ -88,21 +89,33 @@ function parser(pluginPasses, options, code) {
     }
     throw new Error("More than one plugin attempted to override parsing.");
   } catch (err) {
-    const loc = err.loc;
+    if (err.code === "BABEL_PARSER_SOURCETYPE_MODULE_REQUIRED") {
+      err.message +=
+        "\nConsider renaming the file to '.mjs', or setting sourceType:module " +
+        "or sourceType:unambiguous in your Babel config for this file.";
+    }
+
+    const { loc, missingPlugin } = err;
     if (loc) {
-      err.loc = null;
-      err.message =
-        `${options.filename || "unknown"}: ${err.message}\n` +
-        codeFrameColumns(
-          code,
-          {
-            start: {
-              line: loc.line,
-              column: loc.column + 1,
-            },
+      const codeFrame = codeFrameColumns(
+        code,
+        {
+          start: {
+            line: loc.line,
+            column: loc.column + 1,
           },
-          options,
-        );
+        },
+        options,
+      );
+      if (missingPlugin) {
+        err.message =
+          `${options.filename || "unknown"}: ` +
+          generateMissingPluginMessage(missingPlugin[0], loc, codeFrame);
+      } else {
+        err.message =
+          `${options.filename || "unknown"}: ${err.message}\n\n` + codeFrame;
+      }
+      err.code = "BABEL_PARSE_ERROR";
     }
     throw err;
   }

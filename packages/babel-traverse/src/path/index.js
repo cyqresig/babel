@@ -7,6 +7,7 @@ import traverse from "../index";
 import Scope from "../scope";
 import * as t from "@babel/types";
 import { path as pathCache } from "../cache";
+import generator from "@babel/generator";
 
 // NodePath is split across many files.
 import * as NodePath_ancestry from "./ancestry";
@@ -146,6 +147,10 @@ export default class NodePath {
     if (!debug.enabled) return;
     debug(`${this.getPathLocation()} ${this.type}: ${message}`);
   }
+
+  toString() {
+    return generator(this.node).code;
+  }
 }
 
 Object.assign(
@@ -165,12 +170,13 @@ Object.assign(
 
 for (const type of (t.TYPES: Array<string>)) {
   const typeKey = `is${type}`;
+  const fn = t[typeKey];
   NodePath.prototype[typeKey] = function(opts) {
-    return t[typeKey](this.node, opts);
+    return fn(this.node, opts);
   };
 
   NodePath.prototype[`assert${type}`] = function(opts) {
-    if (!this[typeKey](opts)) {
+    if (!fn(this.node, opts)) {
       throw new TypeError(`Expected node path of type ${type}`);
     }
   };

@@ -1,7 +1,9 @@
+import { declare } from "@babel/helper-plugin-utils";
 import annotateAsPure from "@babel/helper-annotate-as-pure";
 import { types as t } from "@babel/core";
 
-export default function(api, options) {
+export default declare((api, options) => {
+  api.assertVersion(7);
   const { loose } = options;
 
   let helperName = "taggedTemplateLiteral";
@@ -43,9 +45,6 @@ export default function(api, options) {
   }
 
   return {
-    pre() {
-      this.templates = new Map();
-    },
     visitor: {
       TaggedTemplateExpression(path) {
         const { node } = path;
@@ -53,6 +52,9 @@ export default function(api, options) {
 
         const strings = [];
         const raws = [];
+
+        // Flag variable to check if contents of strings and raw are equal
+        let isStringsRawEqual = true;
 
         for (const elem of (quasi.quasis: Array)) {
           const { raw, cooked } = elem.value;
@@ -63,40 +65,39 @@ export default function(api, options) {
 
           strings.push(value);
           raws.push(t.stringLiteral(raw));
+
+          if (raw !== cooked) {
+            // false even if one of raw and cooked are not equal
+            isStringsRawEqual = false;
+          }
         }
 
-        // Generate a unique name based on the string literals so we dedupe
-        // identical strings used in the program.
-        const rawParts = raws.map(s => s.value).join(",");
-        const name = `${helperName}_${raws.length}_${rawParts}`;
+        const scope = path.scope.getProgramParent();
+        const templateObject = scope.generateUidIdentifier("templateObject");
 
-        let templateObject = this.templates.get(name);
-        if (templateObject) {
-          templateObject = t.clone(templateObject);
-        } else {
-          const programPath = path.find(p => p.isProgram());
-          templateObject = programPath.scope.generateUidIdentifier(
-            "templateObject",
-          );
-          this.templates.set(name, templateObject);
+        const helperId = this.addHelper(helperName);
+        const callExpressionInput = [t.arrayExpression(strings)];
 
-          const helperId = this.addHelper(helperName);
-          const init = t.callExpression(helperId, [
-            t.arrayExpression(strings),
-            t.arrayExpression(raws),
-          ]);
-          annotateAsPure(init);
-          init._compact = true;
-          programPath.scope.push({
-            id: templateObject,
-            init,
-            // This ensures that we don't fail if not using function expression helpers
-            _blockHoist: 1.9,
-          });
+        // only add raw arrayExpression if there is any difference between raws and strings
+        if (!isStringsRawEqual) {
+          callExpressionInput.push(t.arrayExpression(raws));
         }
+
+        const init = t.callExpression(helperId, callExpressionInput);
+        annotateAsPure(init);
+        init._compact = true;
+        scope.push({
+          id: templateObject,
+          init,
+          // This ensures that we don't fail if not using function expression helpers
+          _blockHoist: 1.9,
+        });
 
         path.replaceWith(
-          t.callExpression(node.tag, [templateObject, ...quasi.expressions]),
+          t.callExpression(node.tag, [
+            t.cloneNode(templateObject),
+            ...quasi.expressions,
+          ]),
         );
       },
 
@@ -139,4 +140,4 @@ export default function(api, options) {
       },
     },
   };
-}
+});
